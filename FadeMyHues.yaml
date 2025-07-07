@@ -1,0 +1,170 @@
+blueprint:
+  name: Advanced RGB Fade with Manual Override
+  description: Smoothly transitions light(s) through RGB colors and brightness, triggered by a specific light turning on. Includes a manual override to stop the fade and a time-based condition.
+  domain: automation
+
+  input:
+    # Trigger Configuration
+    trigger_light_entity:
+      name: Trigger Light
+      description: The light entity that, when turned ON, will start this fade automation.
+      selector:
+        entity:
+          domain: light
+
+    trigger_after_time:
+      name: Only Trigger After Time
+      description: The automation will only run if the trigger light turns on AFTER this specific time (e.g., 22:45:00 for 10:45 PM).
+      default: "22:45:00" # Based on your original automation
+      selector:
+        time:
+
+    # Controlled Lights Configuration
+    controlled_lights_target:
+      name: Lights to Control
+      description: Select one or more light entities that will perform the fade.
+      selector:
+        target:
+          entity:
+            domain: light
+
+    # Fade Parameters
+    fade_duration_minutes:
+      name: Fade Duration (minutes)
+      description: How long the entire fade process should take, in minutes.
+      default: 60
+      selector:
+        number:
+          min: 1
+          max: 240 # Max 4 hours should be plenty
+          step: 1
+          unit_of_measurement: "minutes"
+
+    fade_steps:
+      name: Number of Fade Steps
+      description: Higher steps result in a smoother fade but more frequent light updates. Recommended minimum 60 per minute of fade for smooth transition (e.g., 60 minutes * 60 steps/min = 3600 steps).
+      default: 360 # Your original number of steps
+      selector:
+        number:
+          min: 10
+          max: 10000 # Allow for very smooth fades
+          step: 1
+
+    start_rgb_color:
+      name: Start RGB Color
+      description: The initial RGB color for the fade (e.g., [255, 50, 0] for orange-red).
+      default: [255, 50, 0]
+      selector:
+        color_rgb:
+
+    end_rgb_color:
+      name: End RGB Color
+      description: The final RGB color for the fade (e.g., [100, 0, 0] for deep red).
+      default: [100, 0, 0]
+      selector:
+        color_rgb:
+
+    start_brightness_pct:
+      name: Start Brightness (%)
+      description: The initial brightness percentage for the fade. The fade will decrease from this value to 0%.
+      default: 50 # Your original starting brightness
+      selector:
+        number:
+          min: 0
+          max: 100
+          step: 1
+          unit_of_measurement: "%"
+          mode: slider
+
+variables:
+  # Generalizing inputs for use in templates
+  _controlled_lights_entities: "{{ controlled_lights_target.entity_id }}" # Accessing entity_ids from target selector
+  _fade_duration: !input fade_duration_minutes
+  _steps: !input fade_steps
+  _start_rgb: !input start_rgb_color
+  _end_rgb: !input end_rgb_color
+  _start_brightness: !input start_brightness_pct
+
+  # Calculated variable for delay
+  _step_seconds: "{{ (_fade_duration * 60 / _steps) | round(2) }}" # Use round(2) for better precision of delay
+
+trigger:
+  - platform: state
+    entity_id: !input trigger_light_entity
+    to: "on"
+
+condition:
+  - condition: time
+    after: !input trigger_after_time
+
+action:
+  # 1. Initial turn on of the controlled lights
+  - service: light.turn_on
+    target: !input controlled_lights_target
+    data:
+      rgb_color: "{{ _start_rgb }}"
+      brightness_pct: "{{ _start_brightness }}"
+
+  # 2. Main fade sequence
+  - variables:
+      current_step: 0 # Initialize loop counter
+
+  - repeat:
+      count: "{{ _steps }}" # Repeat for the specified number of steps
+      sequence:
+        # Calculate new RGB and brightness for the current step
+        - variables:
+            p: "{{ current_step / _steps }}" # Progress ratio (0.0 to 1.0)
+            new_r: "{{ ((_start_rgb[0] - (_start_rgb[0] - _end_rgb[0]) * p) | round(0)) | int }}"
+            new_g: "{{ ((_start_rgb[1] - (_start_rgb[1] - _end_rgb[1]) * p) | round(0)) | int }}"
+            new_b: "{{ ((_start_rgb[2] - (_start_rgb[2] - _end_rgb[2]) * p) | round(0)) | int }}"
+            new_brightness: "{{ (_start_brightness * (1 - p)) | round(0) }}" # Fades brightness down to 0%
+
+        # Apply the new color and brightness to lights
+        - service: light.turn_on
+          target: !input controlled_lights_target
+          data:
+            rgb_color:
+              - "{{ new_r }}"
+              - "{{ new_g }}"
+              - "{{ new_b }}"
+            brightness_pct: "{{ new_brightness }}"
+
+        # Wait for the calculated delay for the next step
+        - delay: "{{ _step_seconds }}"
+
+        # Increment step counter for the next iteration
+        - variables:
+            current_step: "{{ current_step + 1 }}"
+
+        # Manual Override Check: Stop if ANY of the controlled lights are no longer 'on'
+        - if:
+            - condition: template
+              value_template: >
+                {% set all_lights_are_on = true %}
+                {% for entity_id in _controlled_lights_entities %}
+                  {% if states(entity_id) != 'on' %}
+                    {% set all_lights_are_on = false %}
+                  {% endif %}
+                {% endfor %}
+                {{ not all_lights_are_on }} # If not all are on, then stop
+          then:
+            - stop: Manual override detected (at least one controlled light was turned off)
+
+  # 3. Final action: Turn off lights if they are still on after the fade completes
+  #    This handles cases where the fade finishes without manual intervention.
+  - if:
+      - condition: template
+        value_template: >
+          {% set all_lights_are_on = true %}
+          {% for entity_id in _controlled_lights_entities %}
+            {% if states(entity_id) != 'on' %}
+              {% set all_lights_are_on = false %}
+            {% endif %}
+          {% endfor %}
+          {{ all_lights_are_on }} # If all are still on, then turn them off
+    then:
+      - service: light.turn_off
+        target: !input controlled_lights_target
+
+mode: parallel # Allows multiple instances of this automation to run concurrently if triggered multiple times.
