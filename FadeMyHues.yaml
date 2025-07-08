@@ -1,186 +1,158 @@
 blueprint:
-  # Basic Blueprint Information
-  name: Advanced RGB Fade with Manual Override
-  description: >-
-    Blueprint to create an automation that smoothly transitions lights through RGB colors and brightness with manual override detection.
-  domain: automation  # This defines what kind of Home Assistant construct this will generate
-
-  # Define user inputs
-  inputs:
-    # Trigger Configuration
-    trigger_light:
-      name: "Trigger Light"
-      description: "Select the light entity that, when turned ON, will start this fade automation."
+  name: Advanced Fading Light Automation
+  description: Fades selected lights from a start color and brightness to an end color and 0 brightness over a specified duration, triggered by a light turning on AND a specific time. Allows manual override.
+  domain: automation
+  input:
+    # --- Triggers ---
+    trigger_light_entity:
+      name: Trigger Light
+      description: The specific light that needs to be turned ON to activate the automation.
       selector:
         entity:
           domain: light
-          capabilities:
-            - "toggle"
 
-    # Time Condition Configuration
-    trigger_after_time:
-      name: "Start Fade After Time"
-      description: "The automation will only run if the trigger light activates AFTER this specified time."
+    trigger_time:
+      name: Trigger Time
+      description: The specific time that needs to be met (e.g., 22:00:00) to activate the automation.
       selector:
         time:
-          default: "22:45:00"
 
-    # Controlled Lights Configuration
-    controlled_lights_target:
-      name: "Controlled Lights for Fade"
-      description: "Select one or more light entities that will perform the smooth RGB fade."
+    # --- Target Lights ---
+    target_lights:
+      name: Target Lights
+      description: Select one or more lights to apply the fading effect to.
       selector:
-        target:
-          entity:
-            domain: light
-            capabilities:
-              - "toggle"
-              - "brightness"
-              - "rgb_color"
+        entity:
+          domain: light
+          multiple: true
 
-    # Fade Parameters
-    fade_duration_minutes:
-      name: "Total Fade Duration (minutes)"
-      description: "The total time for the entire fade process. Lights will dim completely off by the end."
+    # --- Fade Duration ---
+    fade_duration:
+      name: Fade Duration
+      description: How long should the fade take (in minutes)?
+      default: 5
       selector:
         number:
           min: 1
-          max: 240
-          step: 1
-          unit_of_measurement: "minutes"
-          default: 60
+          max: 60
+          unit_of_measurement: minutes
+          mode: slider
 
-    fade_steps:
-      name: "Number of Interpolation Steps"
-      description: "Higher numbers create smoother fade but require more processing. Minimum 2 for interpolation."
-      selector:
-        number:
-          min: 2
-          max: 1000
-          step: 1
-          default: 360
-
-    start_rgb_color:
-      name: "Starting RGB Color"
-      description: "The initial RGB color [R, G, B] for the fade, e.g., [255, 50, 0] for amber."
+    # --- Colors ---
+    start_color:
+      name: Start Color
+      description: The initial color for the fade.
       selector:
         color_rgb:
-          default: [255, 50, 0]
+          label: Start RGB
+          default: [255, 128, 0] # Default to Dark Orange (closer to R:255, G:128, B:0)
 
-    end_rgb_color:
-      name: "Ending RGB Color"
-      description: "The final RGB color [R, G, B] for the fade, e.g., [0, 0, 100] for deep blue."
+    end_color:
+      name: End Color
+      description: The final color for the fade.
       selector:
         color_rgb:
-          default: [0, 0, 0]
+          label: End RGB
+          default: [255, 0, 0] # Default to red
 
-    start_brightness_pct:
-      name: "Starting Brightness (%)"
-      description: "The initial brightness percentage. Brightness will smoothly decrease to 0%."
+    # --- Brightness ---
+    start_brightness:
+      name: Start Brightness
+      description: The initial brightness for the fade (percentage).
+      default: 100
       selector:
         number:
           min: 0
           max: 100
-          step: 1
           unit_of_measurement: "%"
           mode: slider
-          default: 50
-  # Blueprint execution template
-  template:
-    alias: "RGB Fade Automation: {{ inputs.trigger_light }}"
-    description: >
-      Automatically fades lights from {{ inputs.start_rgb_color | to_color }} to 
-      {{ inputs.end_rgb_color | to_color }} over {{ inputs.fade_duration_minutes }} minutes.
 
-    variables:
-      _fade_duration: "{{ inputs.fade_duration_minutes | int }}"
-      _steps: "{{ inputs.fade_steps | int }}"
-      _start_rgb: "{{ inputs.start_rgb_color | default([255, 50, 0]) }}"
-      _end_rgb: "{{ inputs.end_rgb_color | default([0, 0, 0]) }}"
-      _start_brightness: "{{ inputs.start_brightness_pct | int }}"
-      _step_interval: "{{ (_fade_duration * 60 / _steps) }}"
+variables:
+  # Convert fade_duration from minutes to seconds
+  fade_duration_seconds: "{{ (fade_duration | float) * 60 }}"
+  # Calculate step duration for brightness and color changes (e.g., update every 1 second)
+  step_duration_seconds: 1
+  # Calculate total number of steps
+  total_steps: "{{ (fade_duration_seconds / step_duration_seconds) | int(1) }}"
 
-    trigger:
-      - platform: state
-        entity_id: "{{ inputs.trigger_light.entity_id }}"
-        to: "on"
+  # Convert percentage brightness to 0-255 scale
+  start_brightness_255: "{{ (start_brightness | float / 100 * 255) | int }}"
+  # Calculate brightness decrement per step (using 0-255 scale)
+  brightness_decrement_per_step: "{{ (start_brightness_255 | float) / total_steps }}"
 
-    condition:
-      - condition: time
-        after: "{{ inputs.trigger_after_time }}"
+  # Extract RGB components for easier calculation
+  start_r: "{{ start_color[0] | float }}"
+  start_g: "{{ start_color[1] | float }}"
+  start_b: "{{ start_color[2] | float }}"
 
-    action:
-      # 1. Initial turn on with start parameters
-      - service: light.turn_on
-        target:
-          entity_id: "{{ inputs.controlled_lights_target.entity_id }}"
-        data:
-          rgb_color: "{{ _start_rgb }}"
-          brightness_pct: "{{ _start_brightness }}"
+  end_r: "{{ end_color[0] | float }}"
+  end_g: "{{ end_color[1] | float }}"
+  end_b: "{{ end_color[2] | float }}"
 
-      # 2. Main fade sequence
-      - variables:
-          current_step: 0
+trigger:
+  # Trigger 1: Specific light is turned ON
+  - platform: state
+    entity_id: !input trigger_light_entity
+    from: "off"
+    to: "on"
+    id: "trigger_light_on" # Unique ID for this trigger
 
-      - repeat:
-          count: "{{ _steps }}"
-          sequence:
-            # Calculate new RGB and brightness values
-            - variables:
-                p: "{{ current_step / (_steps - 1) if _steps > 1 else (current_step / 1) }}"
-                new_r: "{{ (_start_rgb[0] + (_end_rgb[0] - _start_rgb[0]) * p) | clamp(0, 255) | int }}"
-                new_g: "{{ (_start_rgb[1] + (_end_rgb[1] - _start_rgb[1]) * p) | clamp(0, 255) | int }}"
-                new_b: "{{ (_start_rgb[2] + (_end_rgb[2] - _start_rgb[2]) * p) | clamp(0, 255) | int }}"
-                new_brightness: "{{ _start_brightness * (1 - p) | clamp(0, 100) | int }}"
+  # Trigger 2: Specific time is met
+  - platform: time
+    at: !input trigger_time
+    id: "trigger_time_met" # Unique ID for this trigger
 
-            # Apply the new color and brightness to lights
-            - service: light.turn_on
-              target:
-                entity_id: "{{ inputs.controlled_lights_target.entity_id }}"
-              data:
-                rgb_color:
-                  - "{{ new_r }}"
-                  - "{{ new_g }}"
-                  - "{{ new_b }}"
-                brightness_pct: "{{ new_brightness }}"
+condition:
+  # Ensure BOTH triggers have occurred recently (within a short timeframe)
+  - condition: and
+    conditions:
+      - condition: trigger
+        id: "trigger_light_on"
+      - condition: trigger
+        id: "trigger_time_met"
 
-            # Check for manual override
-            - if:
-                - condition: template
-                  value_template: >
-                    {% set any_light_off = false %}
-                    {% set entities = split(input.controlled_lights_target.entity_id, ',') %}
-                    {% for entity in entities %}
-                      {% if states(entity) != 'on' %}
-                        {% set any_light_off = true; continue %}
-                      {% endif %}
-                    {% endfor %}
-                    {{ any_light_off }}
-              then:
-                - stop: "Manual override detected"
+action:
+  # Action 1: Set initial state of target lights
+  - service: light.turn_on
+    target:
+      entity_id: !input target_lights
+    data:
+      brightness: "{{ start_brightness_255 }}" # Use the 0-255 converted value
+      rgb_color: "{{ start_color }}"
+      transition: 0 # Instant change to start state
 
-            # Wait for the calculated interval
-            - delay: "{{ _step_interval }}"
+  # Action 2: Loop for fading
+  - repeat:
+      count: "{{ total_steps }}"
+      sequence:
+        - variables:
+            # Calculate current step number (1-based index for repeat loop)
+            current_step: "{{ repeat.index }}"
+            # Calculate current brightness (using 0-255 scale)
+            current_brightness: "{{ ([0, start_brightness_255 - (brightness_decrement_per_step * current_step)] | max) | int }}" # Ensure brightness doesn't go below 0
 
-            # Increment the step counter
-            - variables:
-                current_step: "{{ current_step + 1 }}"
+            # Calculate current RGB values using linear interpolation
+            current_r: "{{ (start_r + (end_r - start_r) * (current_step / total_steps)) | int }}"
+            current_g: "{{ (start_g + (end_g - start_g) * (current_step / total_steps)) | int }}"
+            current_b: "{{ (start_b + (end_b - start_b) * (current_step / total_steps)) | int }}"
 
-      # 3. Final action: Turn off lights if they were on at the beginning
-      - if:
-          - condition: template
-            value_template: >
-              {% set any_light_on = false %}
-              {% set entities = split(input.controlled_lights_target.entity_id, ',') %}
-              {% for entity in entities %}
-                {% if states(entity) == 'on' %}
-                  {% set any_light_on = true; break %}
-                {% endif %}
-              {% endfor %}
-              {{ any_light_on }}
-        then:
-          - service: light.turn_off
-            target:
-              entity_id: "{{ inputs.controlled_lights_target.entity_id }}"
+        - service: light.turn_on
+          target:
+            entity_id: !input target_lights
+          data:
+            brightness: "{{ current_brightness }}"
+            rgb_color: "{{ [current_r, current_g, current_b] }}"
+            transition: "{{ step_duration_seconds }}" # Smooth transition to the next step
 
-    mode: restart
+        # Action 3: Stop automation if any target light is turned off manually
+        - wait_for_trigger:
+            - platform: state
+              entity_id: !input target_lights
+              from: "on"
+              to: "off"
+          timeout: "{{ step_duration_seconds }}" # Wait for the duration of one step
+          continue_on_timeout: true # If no light is turned off, continue to next step
+
+        - if: "{{ wait.trigger.platform is defined }}" # If the wait_for_trigger actually triggered (meaning a light was turned off)
+            then:
+              - stop: "Manual override: Light(s) turned off during fade."
