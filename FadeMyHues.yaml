@@ -6,8 +6,8 @@ blueprint:
     Requires setting specific parameters for trigger, target, timing, and fade effects.
   domain: automation
 
-  # Configure Inputs
-  inputs:
+  # Configure Inputs (renamed from 'inputs' to 'input')
+  input: # <--- CHANGED: Was 'inputs', now 'input' (singular)
     # Trigger Configuration
     trigger_light:
       name: "Trigger Light"
@@ -15,7 +15,6 @@ blueprint:
       selector:
         entity:
           domain: light
-          # Capabilities for the trigger light are less critical for fade, toggle is enough
           capabilities: ['toggle'] 
 
     # Time Condition Configuration
@@ -34,7 +33,7 @@ blueprint:
         target:
           entity:
             domain: light
-            capabilities: ['toggle', 'brightness', 'rgb_color'] # These capabilities are critical here
+            capabilities: ['toggle', 'brightness', 'rgb_color'] 
 
     # Fade Parameters
     fade_duration_minutes:
@@ -53,7 +52,7 @@ blueprint:
       description: "Higher steps create smoother fade but require more processing. Minimum 2 for interpolation."
       selector:
         number:
-          min: 2 # Changed to min 2 to ensure _steps - 1 is not zero for interpolation formula
+          min: 2 
           max: 1000
           step: 1
           default: 360
@@ -84,117 +83,91 @@ blueprint:
           mode: slider
           default: 50
 
-  # Blueprint execution template
-  template:
-    # These variables are redundant as they are not used in the automation block below,
-    # as HA assigns its own automation ID.
-    # {% set automation_entity_id = "rgb_fade_automation_" + inputs.trigger_light.entity_id.replace(".", "_") %}
-    # {% set controlled_lights_entity_id = get_entity_ids(inputs.controlled_lights_target) | join(",") %}
+# Blueprint execution template (This 'automation' block is now directly under the root level)
+automation: # <--- CHANGED: Removed the 'template:' key and moved 'automation:' here directly
+  alias: RGB Fade Automation - {{ input.trigger_light.entity_id }} # Uses 'input' now
+  description: "Automatically fades lights between specified RGB colors and dims to off."
+  # `domain: automation` is already defined at the blueprint root, not needed here within the automation itself.
 
-    automation:
-      # It's good practice to provide an ID for blueprints if you intend to reference them programmatically.
-      # id: !input automation_id # Or a fixed ID: rgb_fade_automation
-      alias: RGB Fade Automation - {{ inputs.trigger_light.entity_id }} # Making alias unique based on trigger
-      description: "Automatically fades lights between specified RGB colors and dims to off."
-      # `domain: automation` is already defined at the blueprint root, not needed here.
+  variables:
+    _fade_duration: "{{ input.fade_duration_minutes }}" # Uses 'input' now
+    _steps: "{{ input.fade_steps }}" # Uses 'input' now
+    _start_rgb: "{{ input.start_rgb_color }}" # Uses 'input' now
+    _end_rgb: "{{ input.end_rgb_color }}" # Uses 'input' now
+    _start_brightness: "{{ input.start_brightness_pct }}" # Uses 'input' now
+    _step_seconds: "{{ (_fade_duration * 60.0 / _steps) | round(2) }}"
 
-      variables:
-        _fade_duration: "{{ inputs.fade_duration_minutes }}"
-        _steps: "{{ inputs.fade_steps }}"
-        # Removed jsonify. These variables now hold native Jinja lists.
-        _start_rgb: "{{ inputs.start_rgb_color }}"
-        _end_rgb: "{{ inputs.end_rgb_color }}"
-        _start_brightness: "{{ inputs.start_brightness_pct }}"
-        # Ensure float division by multiplying by 60.0
-        _step_seconds: "{{ (_fade_duration * 60.0 / _steps) | round(2) }}"
+  trigger:
+    - platform: state
+      entity_id: "{{ input.trigger_light.entity_id }}" # Uses 'input' now
+      to: "on"
 
-      trigger:
-        - platform: state
-          entity_id: "{{ inputs.trigger_light.entity_id }}"
-          to: "on"
+  condition:
+    - condition: time
+      after: "{{ input.trigger_after_time }}" # Uses 'input' now
 
-      condition:
-        - condition: time
-          after: "{{ inputs.trigger_after_time }}"
+  action:
+    # 1. Initial turn on of the controlled lights
+    - service: light.turn_on
+      target:
+        entity_id: "{{ input.controlled_lights_target.entity_id }}" # Uses 'input' now
+      data:
+        rgb_color: "{{ _start_rgb }}" 
+        brightness_pct: "{{ _start_brightness }}"
 
-      action:
-        # 1. Initial turn on of the controlled lights
-        - service: light.turn_on
+    # 2. Main fade sequence
+    - repeat:
+        count: "{{ _steps }}" 
+        sequence:
+          - variables:
+              p: "{{ (repeat.index * 1.0) / (_steps - 1 if _steps > 1 else 1) }}"
+              new_r: "{{ ((_start_rgb[0] - (_start_rgb[0] - _end_rgb[0]) * p) | round(0) | int) }}"
+              new_g: "{{ ((_start_rgb[1] - (_start_rgb[1] - _end_rgb[1]) * p) | round(0) | int) }}"
+              new_b: "{{ ((_start_rgb[2] - (_start_rgb[2] - _end_rgb[2]) * p) | round(0) | int) }}"
+              new_brightness: "{{ (_start_brightness * (1 - p)) | round(0) | int }}"
+
+          - service: light.turn_on
+            target:
+              entity_id: "{{ input.controlled_lights_target.entity_id }}" # Uses 'input' now
+            data:
+              rgb_color:
+                - "{{ new_r }}"
+                - "{{ new_g }}"
+                - "{{ new_b }}"
+              brightness_pct: "{{ new_brightness }}"
+
+          - delay:
+              milliseconds: "{{ (_step_seconds * 1000) | int(0) }}"
+
+          - if:
+              - condition: template
+                value_template: >
+                  {% set all_lights_on = true %}
+                  {% set controlled_entities = expand(input.controlled_lights_target.entity_id) %} {# Uses 'input' now #}
+                  {% for entity in controlled_entities %}
+                    {% if states(entity.entity_id) != 'on' %}
+                      {% set all_lights_on = false %}
+                      {% break %}
+                    {% endif %}
+                  {% endfor %}
+                  {{ not all_lights_on }}
+            then:
+              - stop: "Manual override detected: one or more controlled lights were turned off."
+          
+    # 3. Final action: Turn off lights if still on (after fade completes)
+    - if:
+        - condition: template
+          value_template: >
+            {% set all_lights_on = true %}
+            {% set controlled_entities = expand(input.controlled_lights_target.entity_id) %} {# Uses 'input' now #}
+            {% for entity in controlled_entities %}
+              {% if states(entity.entity_id) != 'on' %}
+                {% set all_lights_on = false %}
+                {% break %}
+              {% endif %}
+            {% endfor %}
+            {{ all_lights_on }}
+      then:
+        - service: light.turn_off
           target:
-            entity_id: "{{ inputs.controlled_lights_target.entity_id }}"
-          # Use 'data' instead of 'data_template' as values are directly templated
-          data:
-            rgb_color: "{{ _start_rgb }}" # Passing native list directly
-            brightness_pct: "{{ _start_brightness }}"
-
-        # 2. Main fade sequence
-        # Removed the problematic 'current_step: 0' variable
-        - repeat:
-            count: "{{ _steps }}" # This will loop _steps times. repeat.index goes from 0 to _steps-1.
-            sequence:
-              # Calculate new RGB and brightness for the current step
-              - variables:
-                  # Calculate 'p' (progress) from 0 to 1 over the steps.
-                  # (repeat.index * 1.0) ensures float division.
-                  # (_steps - 1 if _steps > 1 else 1) handles _steps = 1 to prevent division by zero.
-                  p: "{{ (repeat.index * 1.0) / (_steps - 1 if _steps > 1 else 1) }}"
-                  
-                  # Interpolate R, G, B values
-                  new_r: "{{ ((_start_rgb[0] - (_start_rgb[0] - _end_rgb[0]) * p) | round(0) | int) }}"
-                  new_g: "{{ ((_start_rgb[1] - (_start_rgb[1] - _end_rgb[1]) * p) | round(0) | int) }}"
-                  new_b: "{{ ((_start_rgb[2] - (_start_rgb[2] - _end_rgb[2]) * p) | round(0) | int) }}"
-                  # Interpolate brightness from _start_brightness to 0
-                  new_brightness: "{{ (_start_brightness * (1 - p)) | round(0) | int }}"
-
-              # Apply the new color and brightness to lights
-              - service: light.turn_on
-                target:
-                  entity_id: "{{ inputs.controlled_lights_target.entity_id }}"
-                data:
-                  # Explicitly construct the list for rgb_color using the interpolated values
-                  rgb_color:
-                    - "{{ new_r }}"
-                    - "{{ new_g }}"
-                    - "{{ new_b }}"
-                  brightness_pct: "{{ new_brightness }}"
-
-              # Wait for the calculated delay for the next step.
-              # Use a numeric calculation for delay to avoid precision issues if _step_seconds is very small.
-              - delay:
-                  milliseconds: "{{ (_step_seconds * 1000) | int(0) }}"
-
-              # Check for manual override
-              - if:
-                  - condition: template
-                    value_template: >
-                      {% set all_lights_on = true %}
-                      {% set controlled_entities = expand(inputs.controlled_lights_target.entity_id) %}
-                      {% for entity in controlled_entities %}
-                        {% if states(entity.entity_id) != 'on' %}
-                          {% set all_lights_on = false %}
-                          {% break %}
-                        {% endif %}
-                      {% endfor %}
-                      {{ not all_lights_on }}
-                then:
-                  - stop: "Manual override detected: one or more controlled lights were turned off."
-              
-              # Removed the problematic 'current_step' incrementer here
-
-        # 3. Final action: Turn off lights if still on (after fade completes)
-        - if:
-            - condition: template
-              value_template: >
-                {% set all_lights_on = true %}
-                {% set controlled_entities = expand(inputs.controlled_lights_target.entity_id) %}
-                {% for entity in controlled_entities %}
-                  {% if states(entity.entity_id) != 'on' %}
-                    {% set all_lights_on = false %}
-                    {% break %}
-                  {% endif %}
-                {% endfor %}
-                {{ all_lights_on }}
-          then:
-            - service: light.turn_off
-              target:
-                entity_id: "{{ inputs.controlled_lights_target.entity_id }}"
+            entity_id: "{{ input.controlled_lights_target.entity_id }}" # Uses 'input' now
