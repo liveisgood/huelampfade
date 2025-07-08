@@ -85,7 +85,6 @@ blueprint:
           unit_of_measurement: "%"
           mode: slider
           default: 50
-
   # Blueprint execution template
   template:
     alias: "RGB Fade Automation: {{ inputs.trigger_light }}"
