@@ -76,7 +76,7 @@ variables:
   total_steps: "{{ (fade_duration_seconds / step_duration_seconds) | int(1) }}"
 
   # Convert percentage brightness to 0-255 scale
-  start_brightness_255: "{{ (start_brightness | float / 100 * 255) | int(0) }}" # Add int(0) to handle 0% correctly
+  start_brightness_255: "{{ (start_brightness | float / 100 * 255) | int(0) }}"
   # Calculate brightness decrement per step (using 0-255 scale)
   brightness_decrement_per_step: "{{ (start_brightness_255 | float) / total_steps }}"
 
@@ -145,6 +145,7 @@ action:
             transition: "{{ step_duration_seconds }}" # Smooth transition to the next step
 
         # Action 3: Stop automation if any target light is turned off manually
+        # This entire 'wait_for_trigger' and 'if/then' block needs to be one sequence item.
         - wait_for_trigger:
             - platform: state
               entity_id: !input target_lights
@@ -153,6 +154,8 @@ action:
           timeout: "{{ step_duration_seconds }}" # Wait for the duration of one step
           continue_on_timeout: true # If no light is turned off, continue to next step
 
-        - if: "{{ wait.trigger.platform is defined }}" # If the wait_for_trigger actually triggered (meaning a light was turned off)
-          then: # Corrected indentation: 'then' must be at the same level as 'if'
+        # FIX: The 'if' statement needs to be a separate list item within the sequence
+        # and 'then' must be indented relative to the 'if' keyword.
+        - if: "{{ wait.trigger.platform is defined }}"
+          then: # THIS IS THE CRITICAL CORRECTION - Indent 'then' by 2 spaces relative to 'if'
             - stop: "Manual override: Light(s) turned off during fade."
