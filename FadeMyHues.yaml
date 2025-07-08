@@ -1,14 +1,13 @@
 blueprint:
-  # Basic Blueprint Information
+  # Basic Blueprint Information (these are direct children of 'blueprint')
   name: Advanced RGB Fade with Manual Override
   description: >-
     Blueprint to create an automation that smoothly transitions lights through RGB colors and brightness.
     Requires setting specific parameters for trigger, target, timing, and fade effects.
   domain: automation
 
-  # Configure Inputs (renamed from 'inputs' to 'input')
-  input: # <--- CHANGED: Was 'inputs', now 'input' (singular)
-    # Trigger Configuration
+  # Configure Inputs (this is 'input:' singular, also a direct child of 'blueprint')
+  input: # <--- CORRECTED: This must be 'input' (singular) as a direct child of 'blueprint'
     trigger_light:
       name: "Trigger Light"
       description: "The light entity that, when turned ON, will start this fade."
@@ -17,7 +16,6 @@ blueprint:
           domain: light
           capabilities: ['toggle'] 
 
-    # Time Condition Configuration
     trigger_after_time:
       name: "Only Trigger After Time"
       description: "Automation will only run if the trigger light turns on AFTER this time."
@@ -25,7 +23,6 @@ blueprint:
         time:
           default: "22:45:00"
 
-    # Controlled Lights Configuration
     controlled_lights_target:
       name: "Lights to Control"
       description: "Select one or more light entities that will perform the fade."
@@ -35,7 +32,6 @@ blueprint:
             domain: light
             capabilities: ['toggle', 'brightness', 'rgb_color'] 
 
-    # Fade Parameters
     fade_duration_minutes:
       name: "Fade Duration (minutes)"
       description: "How long the entire fade process should take, in minutes."
@@ -83,34 +79,33 @@ blueprint:
           mode: slider
           default: 50
 
-# Blueprint execution template (This 'automation' block is now directly under the root level)
-automation: # <--- CHANGED: Removed the 'template:' key and moved 'automation:' here directly
-  alias: RGB Fade Automation - {{ input.trigger_light.entity_id }} # Uses 'input' now
+  # The automation definition itself (alias, description, variables, trigger, condition, action)
+  # MUST be direct children of the 'blueprint:' key, alongside 'name', 'description', 'domain', and 'input'.
+  alias: RGB Fade Automation - {{ input.trigger_light.entity_id }} # Uses 'input'
   description: "Automatically fades lights between specified RGB colors and dims to off."
-  # `domain: automation` is already defined at the blueprint root, not needed here within the automation itself.
 
   variables:
-    _fade_duration: "{{ input.fade_duration_minutes }}" # Uses 'input' now
-    _steps: "{{ input.fade_steps }}" # Uses 'input' now
-    _start_rgb: "{{ input.start_rgb_color }}" # Uses 'input' now
-    _end_rgb: "{{ input.end_rgb_color }}" # Uses 'input' now
-    _start_brightness: "{{ input.start_brightness_pct }}" # Uses 'input' now
+    _fade_duration: "{{ input.fade_duration_minutes }}" # Uses 'input'
+    _steps: "{{ input.fade_steps }}" # Uses 'input'
+    _start_rgb: "{{ input.start_rgb_color }}" # Uses 'input'
+    _end_rgb: "{{ input.end_rgb_color }}" # Uses 'input'
+    _start_brightness: "{{ input.start_brightness_pct }}" # Uses 'input'
     _step_seconds: "{{ (_fade_duration * 60.0 / _steps) | round(2) }}"
 
   trigger:
     - platform: state
-      entity_id: "{{ input.trigger_light.entity_id }}" # Uses 'input' now
+      entity_id: "{{ input.trigger_light.entity_id }}" # Uses 'input'
       to: "on"
 
   condition:
     - condition: time
-      after: "{{ input.trigger_after_time }}" # Uses 'input' now
+      after: "{{ input.trigger_after_time }}" # Uses 'input'
 
   action:
     # 1. Initial turn on of the controlled lights
     - service: light.turn_on
       target:
-        entity_id: "{{ input.controlled_lights_target.entity_id }}" # Uses 'input' now
+        entity_id: "{{ input.controlled_lights_target.entity_id }}" # Uses 'input'
       data:
         rgb_color: "{{ _start_rgb }}" 
         brightness_pct: "{{ _start_brightness }}"
@@ -128,7 +123,7 @@ automation: # <--- CHANGED: Removed the 'template:' key and moved 'automation:' 
 
           - service: light.turn_on
             target:
-              entity_id: "{{ input.controlled_lights_target.entity_id }}" # Uses 'input' now
+              entity_id: "{{ input.controlled_lights_target.entity_id }}" # Uses 'input'
             data:
               rgb_color:
                 - "{{ new_r }}"
@@ -143,7 +138,7 @@ automation: # <--- CHANGED: Removed the 'template:' key and moved 'automation:' 
               - condition: template
                 value_template: >
                   {% set all_lights_on = true %}
-                  {% set controlled_entities = expand(input.controlled_lights_target.entity_id) %} {# Uses 'input' now #}
+                  {% set controlled_entities = expand(input.controlled_lights_target.entity_id) %} {# Uses 'input' #}
                   {% for entity in controlled_entities %}
                     {% if states(entity.entity_id) != 'on' %}
                       {% set all_lights_on = false %}
@@ -159,7 +154,7 @@ automation: # <--- CHANGED: Removed the 'template:' key and moved 'automation:' 
         - condition: template
           value_template: >
             {% set all_lights_on = true %}
-            {% set controlled_entities = expand(input.controlled_lights_target.entity_id) %} {# Uses 'input' now #}
+            {% set controlled_entities = expand(input.controlled_lights_target.entity_id) %} {# Uses 'input' #}
             {% for entity in controlled_entities %}
               {% if states(entity.entity_id) != 'on' %}
                 {% set all_lights_on = false %}
@@ -170,4 +165,5 @@ automation: # <--- CHANGED: Removed the 'template:' key and moved 'automation:' 
       then:
         - service: light.turn_off
           target:
-            entity_id: "{{ input.controlled_lights_target.entity_id }}" # Uses 'input' now
+            entity_id: "{{ input.controlled_lights_target.entity_id }}" # Uses 'input'
+
