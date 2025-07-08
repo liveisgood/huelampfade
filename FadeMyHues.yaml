@@ -76,7 +76,7 @@ variables:
   total_steps: "{{ (fade_duration_seconds / step_duration_seconds) | int(1) }}"
 
   # Convert percentage brightness to 0-255 scale
-  start_brightness_255: "{{ (start_brightness | float / 100 * 255) | int }}"
+  start_brightness_255: "{{ (start_brightness | float / 100 * 255) | int(0) }}" # Add int(0) to handle 0% correctly
   # Calculate brightness decrement per step (using 0-255 scale)
   brightness_decrement_per_step: "{{ (start_brightness_255 | float) / total_steps }}"
 
@@ -129,12 +129,12 @@ action:
             # Calculate current step number (1-based index for repeat loop)
             current_step: "{{ repeat.index }}"
             # Calculate current brightness (using 0-255 scale)
-            current_brightness: "{{ ([0, start_brightness_255 - (brightness_decrement_per_step * current_step)] | max) | int }}" # Ensure brightness doesn't go below 0
+            current_brightness: "{{ ([0, start_brightness_255 - (brightness_decrement_per_step * current_step)] | max) | int(0) }}" # Ensure brightness doesn't go below 0
 
             # Calculate current RGB values using linear interpolation
-            current_r: "{{ (start_r + (end_r - start_r) * (current_step / total_steps)) | int }}"
-            current_g: "{{ (start_g + (end_g - start_g) * (current_step / total_steps)) | int }}"
-            current_b: "{{ (start_b + (end_b - start_b) * (current_step / total_steps)) | int }}"
+            current_r: "{{ (start_r + (end_r - start_r) * (current_step / total_steps)) | int(0) }}"
+            current_g: "{{ (start_g + (end_g - start_g) * (current_step / total_steps)) | int(0) }}"
+            current_b: "{{ (start_b + (end_b - start_b) * (current_step / total_steps)) | int(0) }}"
 
         - service: light.turn_on
           target:
@@ -154,5 +154,5 @@ action:
           continue_on_timeout: true # If no light is turned off, continue to next step
 
         - if: "{{ wait.trigger.platform is defined }}" # If the wait_for_trigger actually triggered (meaning a light was turned off)
-            then:
-              - stop: "Manual override: Light(s) turned off during fade."
+          then: # Corrected indentation: 'then' must be at the same level as 'if'
+            - stop: "Manual override: Light(s) turned off during fade."
