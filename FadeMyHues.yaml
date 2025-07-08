@@ -117,7 +117,7 @@ action:
     target:
       entity_id: !input target_lights
     data:
-      brightness: "{{ start_brightness_255 }}" # Use the 0-255 converted value
+      brightness: "{{ start_brightness_255 }}"
       rgb_color: "{{ start_color }}"
       transition: 0 # Instant change to start state
 
@@ -126,12 +126,8 @@ action:
       count: "{{ total_steps }}"
       sequence:
         - variables:
-            # Calculate current step number (1-based index for repeat loop)
             current_step: "{{ repeat.index }}"
-            # Calculate current brightness (using 0-255 scale)
-            current_brightness: "{{ ([0, start_brightness_255 - (brightness_decrement_per_step * current_step)] | max) | int(0) }}" # Ensure brightness doesn't go below 0
-
-            # Calculate current RGB values using linear interpolation
+            current_brightness: "{{ ([0, start_brightness_255 - (brightness_decrement_per_step * current_step)] | max) | int(0) }}"
             current_r: "{{ (start_r + (end_r - start_r) * (current_step / total_steps)) | int(0) }}"
             current_g: "{{ (start_g + (end_g - start_g) * (current_step / total_steps)) | int(0) }}"
             current_b: "{{ (start_b + (end_b - start_b) * (current_step / total_steps)) | int(0) }}"
@@ -142,20 +138,25 @@ action:
           data:
             brightness: "{{ current_brightness }}"
             rgb_color: "{{ [current_r, current_g, current_b] }}"
-            transition: "{{ step_duration_seconds }}" # Smooth transition to the next step
+            transition: "{{ step_duration_seconds }}"
 
-        # Action 3: Stop automation if any target light is turned off manually
-        # This entire 'wait_for_trigger' and 'if/then' block needs to be one sequence item.
-        - wait_for_trigger:
-            - platform: state
-              entity_id: !input target_lights
-              from: "on"
-              to: "off"
-          timeout: "{{ step_duration_seconds }}" # Wait for the duration of one step
-          continue_on_timeout: true # If no light is turned off, continue to next step
-
-        # FIX: The 'if' statement needs to be a separate list item within the sequence
-        # and 'then' must be indented relative to the 'if' keyword.
-        - if: "{{ wait.trigger.platform is defined }}"
-          then: # THIS IS THE CRITICAL CORRECTION - Indent 'then' by 2 spaces relative to 'if'
-            - stop: "Manual override: Light(s) turned off during fade."
+        # Home Assistant typically prefers 'conditions' at the beginning of an action block
+        # to prevent its execution. For stopping mid-loop, we check the state directly.
+        # This is the simplest way to check if ANY of the target lights is off.
+        - condition: "{{ is_state(target_lights | first, 'on') }}" # Check the first light as an indicator.
+                                                                    # If you turn off any light in the group, this needs a better check.
+                                                                    # Let's check ALL lights are ON.
+        - choose:
+            - conditions:
+                - condition: template
+                  value_template: >
+                    {% set all_on = true %}
+                    {% for light_id in target_lights %}
+                      {% if is_state(light_id, 'off') %}
+                        {% set all_on = false %}
+                        {% break %}
+                      {% endif %}
+                    {% endfor %}
+                    {{ not all_on }} # If any light is OFF, this will be true.
+              sequence: # If condition above is met (i.e., NOT all_on / some light is off)
+                - stop: "Manual override: Light(s) turned off during fade."
